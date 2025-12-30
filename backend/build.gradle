@@ -1,0 +1,55 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.1'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = '21'
+    targetCompatibility = '21'
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.apache.kafka:kafka-streams'
+    implementation 'org.springframework.kafka:spring-kafka'
+    
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Spring Boot plugin configuration
+springBoot {
+    mainClass = 'com.example.app.PauseAwareApplication'
+}
+
+tasks.named('bootRun') {
+    jvmArgs = ["-Djava.net.preferIPv4Stack=true"]
+}
+
+// Exclude Lombok from the bootJar
+bootJar {
+    enabled = true
+    archiveBaseName = 'pause-aware-app'
+    archiveVersion = '0.0.1-SNAPSHOT'
+}
+

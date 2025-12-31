@@ -31,3 +31,4 @@ bin/
 # Logs
 *.log
 
+target/

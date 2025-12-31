@@ -10,7 +10,7 @@ A robust, Kafka-native architecture for conditionally pausing and resuming the p
 2.  **State Store**: Persistent, local buffering of paused events (e.g., `demo-buffer-store`).
 3.  **Compacted Topic**: `key-status` topic stores the latest processing status (ACTIVE/PAUSED) for every entity key.
 4.  **Multi-Topic Support**: Parameterized topology builder allows scaling to multiple topics via configuration.
-5.  **REST API Polling**: Replaced SSE with robust REST endpoints for fetching input, output, and buffer status.
+5.  **REST API Polling**: Robust REST endpoints for fetching input, output, and buffer status.
 
 ### Topics
 

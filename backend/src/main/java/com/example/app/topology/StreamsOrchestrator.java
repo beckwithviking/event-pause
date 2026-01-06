@@ -43,16 +43,15 @@ public class StreamsOrchestrator {
 
     @Bean
     public Topology combinedTopology(StreamsBuilder builder) {
-        // 1. Set up the GlobalKTable for key-status (shared across all topics)
-        // The GlobalKTable is materialized as "key-status-store" and can be accessed by
-        // processors
-        builder.globalTable(
-                "key-status",
-                Consumed.with(Serdes.String(), serdes.keyStatusSerde()),
-                Materialized.as("key-status-store"));
-
-        // 2. Build individual sub-topologies for each topic configuration
         for (PauseConfig config : getTopicConfigs()) {
+            // 1. Set up the GlobalKTable for this flow's status topic
+            // We use a unique store name per flow to avoid conflicts
+            builder.globalTable(
+                    config.statusTopic(),
+                    Consumed.with(Serdes.String(), serdes.keyStatusSerde()),
+                    Materialized.as(config.statusStoreName()));
+
+            // 2. Build individual sub-topology
             topologyBuilder.build(builder, config);
         }
 

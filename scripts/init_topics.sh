@@ -20,8 +20,10 @@ create_topic() {
         $CONFIG || echo "Topic $TOPIC_NAME might already exist"
 }
 
-# 1. Status Topic (Compacted) - CRITICAL
-create_topic "key-status" "--config cleanup.policy=compact"
+# 1. Status Topics (Compacted) - CRITICAL
+create_topic "demo-status" "--config cleanup.policy=compact"
+create_topic "orders-status" "--config cleanup.policy=compact"
+create_topic "payments-status" "--config cleanup.policy=compact"
 
 # 2. Topics for 'Demo' flow
 create_topic "demo-in" ""

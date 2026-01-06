@@ -49,7 +49,9 @@ sleep 20
 echo "Initializing Topics..."
 # We run init topics inside a transient container on the same network to ensure connectivity
 # Or we can simply exec into the kafka container
-podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic key-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic demo-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic orders-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic payments-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
 podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic demo-in --partitions 6 --replication-factor 1
 podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic demo-out --partitions 6 --replication-factor 1
 podman exec $KAFKA_CONTAINER /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --bootstrap-server $KAFKA_CONTAINER:9092 --topic demo-resume --partitions 6 --replication-factor 1

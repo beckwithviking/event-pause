@@ -17,9 +17,11 @@ public class PauseAwareProcessor implements Processor<String, Event, String, Eve
     private KeyValueStore<String, List<Event>> bufferStore;
     private ReadOnlyKeyValueStore<String, Object> statusStore;
     private final String bufferStoreName;
+    private final String statusStoreName;
 
-    public PauseAwareProcessor(String bufferStoreName) {
+    public PauseAwareProcessor(String bufferStoreName, String statusStoreName) {
         this.bufferStoreName = bufferStoreName;
+        this.statusStoreName = statusStoreName;
     }
 
     @Override
@@ -27,7 +29,7 @@ public class PauseAwareProcessor implements Processor<String, Event, String, Eve
         this.context = context;
         this.bufferStore = context.getStateStore(bufferStoreName);
         // Important: GlobalKTable stores are read-only
-        this.statusStore = context.getStateStore("key-status-store");
+        this.statusStore = context.getStateStore(statusStoreName);
     }
 
     @Override

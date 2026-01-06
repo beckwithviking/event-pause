@@ -30,7 +30,8 @@ public class PauseTopologyBuilder {
                 // the buffer store
                 builder.stream(config.mainTopic(), Consumed.with(Serdes.String(), serdes.eventSerde()))
                                 .process(
-                                                () -> new PauseAwareProcessor(config.bufferStoreName()),
+                                                () -> new PauseAwareProcessor(config.bufferStoreName(),
+                                                                config.statusStoreName()),
                                                 config.bufferStoreName()) // Connect to buffer store (GlobalKTable is
                                                                           // globally accessible)
                                 .to(config.outputTopic(), Produced.with(Serdes.String(), serdes.eventSerde()));

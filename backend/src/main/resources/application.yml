@@ -19,19 +19,19 @@ app:
   flows:
     - topicId: demo
       mainTopic: demo-in
-      statusTopic: key-status
+      statusTopic: demo-status
       triggerTopic: demo-resume
       outputTopic: demo-out
       bufferStoreName: demo-buffer-store
     - topicId: orders
       mainTopic: orders-in
-      statusTopic: key-status
+      statusTopic: orders-status
       triggerTopic: orders-resume
       outputTopic: orders-out
       bufferStoreName: orders-buffer-store
     - topicId: payments
       mainTopic: payments-in
-      statusTopic: key-status
+      statusTopic: payments-status
       triggerTopic: payments-resume
       outputTopic: payments-out
       bufferStoreName: payments-buffer-store

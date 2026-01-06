@@ -43,7 +43,8 @@ public class PauseResumeController {
         PauseConfig config = orchestrator.getConfig(topicId);
         if (config == null)
             return ResponseEntity.notFound().build();
-        kafkaTemplate.send("key-status", key, KeyStatus.PAUSED);
+        // Use flow-specific status topic
+        kafkaTemplate.send(config.statusTopic(), key, KeyStatus.PAUSED);
         return ResponseEntity.accepted().build();
     }
 
@@ -55,7 +56,8 @@ public class PauseResumeController {
             return ResponseEntity.notFound().build();
 
         // 1. Set status to ACTIVE
-        kafkaTemplate.send("key-status", key, KeyStatus.ACTIVE);
+        // Use flow-specific status topic
+        kafkaTemplate.send(config.statusTopic(), key, KeyStatus.ACTIVE);
 
         // 2. Trigger buffer drain via resume topic
         // The resume topic is monitored by ResumeTriggerProcessor which triggers the
@@ -118,7 +120,10 @@ public class PauseResumeController {
     public ResponseEntity<Map<String, Object>> getKeyStatus(
             @PathVariable String topicId,
             @PathVariable String key) {
-        KeyStatus status = storeQueryService.getKeyStatus(key);
+        PauseConfig config = orchestrator.getConfig(topicId);
+        if (config == null)
+            return ResponseEntity.notFound().build();
+        KeyStatus status = storeQueryService.getKeyStatus(config.statusStoreName(), key);
         Map<String, Object> result = new HashMap<>();
         result.put("key", key);
         result.put("status", status);

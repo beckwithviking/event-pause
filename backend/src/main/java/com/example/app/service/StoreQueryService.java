@@ -37,7 +37,7 @@ public class StoreQueryService {
         }
     }
 
-    public KeyStatus getKeyStatus(String key) {
+    public KeyStatus getKeyStatus(String statusStoreName, String key) {
         KafkaStreams streams = factoryBean.getKafkaStreams();
         if (streams == null) {
             return KeyStatus.ACTIVE; // Default
@@ -46,7 +46,7 @@ public class StoreQueryService {
         try {
             // GlobalKTable store name
             ReadOnlyKeyValueStore<String, Object> store = streams.store(
-                    StoreQueryParameters.fromNameAndType("key-status-store", QueryableStoreTypes.keyValueStore()));
+                    StoreQueryParameters.fromNameAndType(statusStoreName, QueryableStoreTypes.keyValueStore()));
 
             Object value = store.get(key);
             if (value instanceof org.apache.kafka.streams.state.ValueAndTimestamp) {

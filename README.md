@@ -6,15 +6,15 @@ A robust, Kafka-native architecture for conditionally pausing and resuming the p
 
 ### Key Components
 
-1.  **GlobalKTable**: Provides instant, local lookups of the current key status for every Streams instance.
+1.  **GlobalKTable (Per Flow)**: Provides instant, local lookups of the current key status *specifically for that flow*.
 2.  **State Store**: Persistent, local buffering of paused events (e.g., `demo-buffer-store`).
-3.  **Compacted Topic**: `key-status` topic stores the latest processing status (ACTIVE/PAUSED) for every entity key.
-4.  **Multi-Topic Support**: Parameterized topology builder allows scaling to multiple topics via configuration.
-5.  **REST API Polling**: Robust REST endpoints for fetching input, output, and buffer status.
+3.  **Compacted Status Topics**: Unique topics (e.g., `demo-status`, `orders-status`) store the latest processing status (ACTIVE/PAUSED) for every entity key in that specific flow. Using separate topics prevents key collisions between flows.
+4.  **Multi-Topic Support**: Parameterized topology builder creates a completely isolated sub-topology for each configured flow.
+5.  **REST API Polling**: Robust REST endpoints for fetching input, output, and buffer status across all flows.
 
 ### Topics
 
-*   `key-status`: Compacted topic storing ACTIVE/PAUSED status for keys.
+*   `*-status`: Compacted topic storing ACTIVE/PAUSED status (e.g., `demo-status`, `orders-status`).
 *   `*-in`: Input topics for events (e.g., `demo-in`, `orders-in`).
 *   `*-out`: Output topics for processed events.
 *   `*-resume`: Trigger topics used to signal the Resume Processor to drain buffered events.
@@ -102,7 +102,7 @@ sequenceDiagram
 
     P->>T: Send Event (Key: A)
     T->>S: Consume Event
-    S->>S: Check Key Status (A)
+    S->>S: Check Key Status in Flow-Specific Store
     Note right of S: Status is ACTIVE (Default)
     S->>O: Forward Event
 ```
@@ -113,15 +113,15 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant C as Controller
-    participant KS as KeyStatus Topic
+    participant FS as Flow Status Topic
     participant P as Producer
     participant T as Kafka Input Topic
     participant S as Stream Processor
     participant B as Buffer Store
 
-    U->>C: Pause Key A
-    C->>KS: Send Status: PAUSED (Key: A)
-    KS->>S: GlobalKTable Update (A=PAUSED)
+    U->>C: Pause Key A (Flow: Orders)
+    C->>FS: Send Status: PAUSED (Key: A) to orders-status
+    FS->>S: GlobalKTable Update (orders-status-store)
     
     P->>T: Send Event (Key: A)
     T->>S: Consume Event
@@ -136,18 +136,18 @@ sequenceDiagram
 sequenceDiagram
     participant U as User
     participant C as Controller
-    participant KS as KeyStatus Topic
+    participant FS as Flow Status Topic
     participant RT as Resume Trigger Topic
     participant S as Stream Processor
     participant B as Buffer Store
     participant O as Kafka Output Topic
 
-    U->>C: Resume Key A
-    C->>KS: Send Status: ACTIVE (Key: A)
-    C->>RT: Send Resume Command (Key: A)
+    U->>C: Resume Key A (Flow: Orders)
+    C->>FS: Send Status: ACTIVE (Key: A) to orders-status
+    C->>RT: Send Resume Command (Key: A) to orders-resume
     
     par Update Status
-        KS->>S: GlobalKTable Update (A=ACTIVE)
+        FS->>S: GlobalKTable Update (A=ACTIVE)
     and Trigger Drain
         RT->>S: Consume Resume Command
         S->>B: Fetch Buffered Events (Key: A)
@@ -170,7 +170,7 @@ app:
   flows:
     - topicId: new-flow
       mainTopic: new-flow-in
-      statusTopic: key-status
+      statusTopic: new-flow-status
       triggerTopic: new-flow-resume
       outputTopic: new-flow-out
       bufferStoreName: new-flow-buffer-store

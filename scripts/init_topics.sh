@@ -21,16 +21,17 @@ create_topic() {
 }
 
 # 1. Status Topics (Compacted) - CRITICAL
+# Source of truth for Key Status (Active/Paused)
 create_topic "demo-status" "--config cleanup.policy=compact"
 create_topic "orders-status" "--config cleanup.policy=compact"
 create_topic "payments-status" "--config cleanup.policy=compact"
 
 # 2. Topics for 'Demo' flow
-create_topic "demo-in" ""
-create_topic "demo-out" ""
-create_topic "demo-resume" ""
+create_topic "demo-in" ""      # Main Events (Input)
+create_topic "demo-out" ""     # Processed Events (Output)
+create_topic "demo-resume" ""  # Resume Trigger (Command Stream)
 
-# 3. Topics for 'Orders' flow (as an example of multi-topic)
+# 3. Topics for 'Orders' flow
 create_topic "orders-in" ""
 create_topic "orders-out" ""
 create_topic "orders-resume" ""

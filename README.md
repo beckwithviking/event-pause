@@ -1,33 +1,155 @@
-# Kafka Streams Pause-Aware Processing Application
+# Kafka Streams Pause-Aware Architecture (Strict Ordering Edition)
 
-A robust, Kafka-native architecture for conditionally pausing and resuming the processing of events based on their key. This implementation leverages Kafka Streams, Compaction, and the Processor API to ensure high durability, ordering guarantees, and Exactly-Once Semantics (EOS).
+This document describes a robust, Kafka-native architecture for conditionally pausing and resuming event processing. It is specifically designed to guarantee **Strict Per-Key Ordering** ($Old Buffered Events \rightarrow New Events$) by eliminating race conditions common in distributed systems.
 
-## Architecture Overview
+## Core Architecture
 
-### Key Components
+### The "Unified Processor" Pattern
+Unlike traditional designs that separate "Trigger" and "Event" processing, this architecture routes both the main-events stream and the resume-trigger command stream into a single, unified Processor Node.
 
-1.  **GlobalKTable (Per Flow)**: Provides instant, local lookups of the current key status *specifically for that flow*.
-2.  **State Store**: Persistent, local buffering of paused events (e.g., `demo-buffer-store`).
-3.  **Compacted Status Topics**: Unique topics (e.g., `demo-status`, `orders-status`) store the latest processing status (ACTIVE/PAUSED) for every entity key in that specific flow. Using separate topics prevents key collisions between flows.
-4.  **Multi-Topic Support**: Parameterized topology builder creates a completely isolated sub-topology for each configured flow.
-5.  **REST API Polling**: Robust REST endpoints for fetching input, output, and buffer status across all flows.
+Because Kafka Streams assigns a single thread per partition, processing is inherently synchronous. By handling the Resume Command and New Events in the same thread, we guarantee that the buffer drain completes atomically before any new event is touched.
 
-### Topics
+### Architecture Diagram
+```mermaid
+flowchart LR
+    %% Inputs
+    Events["Topic: main-events<br>(SerDe: Event)"] --> Processor
+    Trigger["Topic: resume-trigger<br>(SerDe: ResumeCommand)"] --> Processor
+    Status["Topic: key-status<br>(Compacted)"] --> GlobalStore
 
-*   `*-status`: Compacted topic storing ACTIVE/PAUSED status (e.g., `demo-status`, `orders-status`).
-*   `*-in`: Input topics for events (e.g., `demo-in`, `orders-in`).
-*   `*-out`: Output topics for processed events.
-*   `*-resume`: Trigger topics used to signal the Resume Processor to drain buffered events.
+    %% Core Components
+    GlobalStore["GlobalKTable<br>(Replicated Status Cache)"] --> Processor
+    
+    subgraph StreamTask ["Stream Task (Single Threaded)"]
+        Processor["PauseAwareProcessor<br>(Unified Logic)"]
+        Buffer[("State Store<br>(paused-buffer-store)")]
+        MemSet["In-Memory Dirty Set<br>(Performance Optimization)"]
+    end
 
-## Prerequisites
+    %% Interactions
+    Processor <-->|Read/Write| Buffer
+    Processor <-->|Track| MemSet
+    
+    %% Outputs
+    Processor -->|Forward| Output["Topic: processed-events"]
+```
 
-*   Java 21+
-*   Gradle 8.0+ (or use Gradle Wrapper)
-*   Node.js 18+ and npm
-*   Podman (for Kafka infrastructure)
+### Component Breakdown
+| Component | Type | Purpose |
+| :--- | :--- | :--- |
+| **PauseAwareProcessor** | Unified Node | The heart of the system. Consumes both Events and Triggers. Enforces "Drain-Before-Process" logic. |
+| **paused-buffer-store** | State Store | Persistent, disk-backed storage for events arriving while Paused. Backed by a changelog topic for fault tolerance. |
+| **Dirty Key Set** | In-Memory Set | Tracks which keys currently have data in the buffer to avoid scanning the entire database during maintenance checks (O(1) access vs O(N) scan). |
+| **key-status** | Compacted Topic | The source of truth for whether a key is ACTIVE or PAUSED. |
+| **GlobalKTable** | View | Provides low-latency local lookups of key-status inside the processor. |
+
+## Logic & Data Flow
+
+### 2.1 The "Drain-First" Guarantee
+To ensure new events never "cut in line" ahead of buffered events, the processor follows this strict decision tree for every incoming record:
+
+1. **If Input is RESUME_COMMAND:**
+   - **Action**: Immediately iterate through the `paused-buffer-store`.
+   - **Action**: Forward all buffered events downstream using their original timestamps.
+   - **Action**: Delete buffer content and remove from Dirty Key Set.
+   - *Note: This is a blocking operation, guarded by MAX_BUFFER_SIZE to prevent thread stalling.*
+
+2. **If Input is MAIN_EVENT:**
+   - **Check 1**: Is GlobalKTable status `PAUSED`?
+     - $\rightarrow$ Buffer the event. Add to Dirty Key Set. Stop.
+   - **Check 2**: Is GlobalKTable status `ACTIVE`?
+     - **CRITICAL STEP**: Check `paused-buffer-store` size via Dirty Key Set.
+     - **If Buffer NOT Empty** (Race condition or Lag detected):
+       - Drain Buffer.
+       - Forward New Event.
+     - **If Buffer Empty**:
+       - Forward New Event.
+
+### Drain-First Logic Flow
+```mermaid
+sequenceDiagram
+    participant I as Input Stream
+    participant P as Processor
+    participant S as GlobalKTable<br>(Status)
+    participant B as State Buffer
+    participant M as Dirty Key Set
+    participant O as Output
+
+    alt Input is RESUME_COMMAND
+        I->>P: Resume(Key A)
+        P->>B: Drain Buffer(A)
+        B-->>P: Buffered Events
+        P->>O: Forward Events
+        P->>B: Delete(A)
+        P->>M: Remove(A)
+    else Input is MAIN_EVENT
+        I->>P: Event(Key A)
+        P->>S: Check In-Memory Status
+        
+        opt Status is PAUSED
+            P->>B: Buffer Event
+            P->>M: Add(A)
+        end
+        
+        opt Status is ACTIVE
+            P->>M: Check if Buffered(A)?
+            alt Has Buffered Data
+                P->>B: Drain Buffer(A)
+                P->>O: Forward Buffered Events
+                P->>B: Delete(A)
+                P->>M: Remove(A)
+                P->>O: Forward New Event
+            else Buffer Empty
+                P->>O: Forward New Event
+            end
+        end
+    end
+```
+
+### 2.2 Handling "Stranded" Events (The Safety Punctuator)
+This architecture specifically addresses the race condition where key-status updates (via GlobalKTable) lag behind the real-time stream.
+
+**The Scalability Solution (Dirty Key Tracking):**
+Iterating the entire state store every second is a performance antipattern (O(N)). Instead, we maintain a `Set<String> bufferedKeys` in memory.
+- When we write to the buffer, we add the key to the Set.
+- When we empty the buffer, we remove the key from the Set.
+- The Punctuator only iterates this in-memory Set.
+
+**The Logic:**
+```java
+foreach (key in bufferedKeys):
+   if (GlobalKTable Status is ACTIVE) -> Drain Buffer.
+```
+
+### Dirty Key Punctuator Flow
+```mermaid
+sequenceDiagram
+    participant P as Punctuator (Timer)
+    participant M as In-Memory Set<br>(bufferedKeys)
+    participant S as GlobalKTable<br>(Status)
+    participant B as State Buffer<br>(RocksDB)
+    participant O as Output
+
+    Note over P, B: Scenario: Key A is buffered but now ACTIVE
+
+    P->>M: 1. Get Dirty Keys
+    M-->>P: Return [Key A]
+
+    loop For each Key (A)
+        P->>S: 2. Check Status(A)
+        S-->>P: ACTIVE
+
+        P->>B: 3. Fetch Events(A)
+        B-->>P: Events [...]
+        
+        P->>O: 4. Forward Events
+        
+        P->>B: 5. Delete(A)
+        P->>M: 6. Remove(A) from Set
+    end
+```
 
 ## Quick Start
-
 ### Option 1: Run Everything (Recommended)
 
 ```bash
@@ -37,7 +159,7 @@ chmod +x run_compose.sh
 
 This script will:
 1.  Start Kafka in Kraft mode via Podman (container: `kafka-poc`).
-2.  Initialize all required topics.
+2.  Initialize all required topics via `scripts/init_topics.sh`.
 3.  Build and containerize the backend (Spring Boot).
 4.  Build and containerize the frontend (Angular).
 5.  Start the entire stack.
@@ -67,117 +189,6 @@ npm install
 npm start
 ```
 
-## Usage
-
-### Frontend UI
-
-1.  **Select Topic**: Choose a flow (demo, orders, payments).
-2.  **Send Events**: Enter a Key and Data, click "Send Event".
-3.  **Pause/Resume**: Enter a Key to control its status.
-4.  **Dashboard**:
-    *   **Auto-Refresh**: Toggle to poll for updates every 2 seconds.
-    *   **Key Status**: Enter a key to see if it is ACTIVE or PAUSED and view its Buffered Events.
-    *   **Tables**: View Input and Output messages side-by-side.
-
-### API Endpoints
-
-*   `POST /control/{topicId}/pause/{key}` - Pause processing for a key.
-*   `POST /control/{topicId}/resume/{key}` - Resume processing for a key.
-*   `POST /control/{topicId}/send?key={key}&data={data}` - Send a test event.
-*   `GET /control/{topicId}/input-messages` - Get the latest messages from the input topic.
-*   `GET /control/{topicId}/output-messages` - Get the latest messages from the output topic.
-*   `GET /control/{topicId}/status/{key}` - Get the current status (ACTIVE/PAUSED).
-*   `GET /control/{topicId}/buffer/{key}` - Get the list of buffered events for a key.
-
-## Sequence Diagrams
-
-### 1. Normal Flow (Active)
-
-```mermaid
-sequenceDiagram
-    participant P as Producer
-    participant T as Kafka Input Topic
-    participant S as Stream Processor
-    participant O as Kafka Output Topic
-
-    P->>T: Send Event (Key: A)
-    T->>S: Consume Event
-    S->>S: Check Key Status in Flow-Specific Store
-    Note right of S: Status is ACTIVE (Default)
-    S->>O: Forward Event
-```
-
-### 2. Pause Flow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant C as Controller
-    participant FS as Flow Status Topic
-    participant P as Producer
-    participant T as Kafka Input Topic
-    participant S as Stream Processor
-    participant B as Buffer Store
-
-    U->>C: Pause Key A (Flow: Orders)
-    C->>FS: Send Status: PAUSED (Key: A) to orders-status
-    FS->>S: GlobalKTable Update (orders-status-store)
-    
-    P->>T: Send Event (Key: A)
-    T->>S: Consume Event
-    S->>S: Check Key Status (A)
-    Note right of S: Status is PAUSED
-    S->>B: Store Event in buffer
-```
-
-### 3. Resume Flow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant C as Controller
-    participant FS as Flow Status Topic
-    participant RT as Resume Trigger Topic
-    participant S as Stream Processor
-    participant B as Buffer Store
-    participant O as Kafka Output Topic
-
-    U->>C: Resume Key A (Flow: Orders)
-    C->>FS: Send Status: ACTIVE (Key: A) to orders-status
-    C->>RT: Send Resume Command (Key: A) to orders-resume
-    
-    par Update Status
-        FS->>S: GlobalKTable Update (A=ACTIVE)
-    and Trigger Drain
-        RT->>S: Consume Resume Command
-        S->>B: Fetch Buffered Events (Key: A)
-        B-->>S: Return Events [E1, E2...]
-        loop For each event
-            S->>O: Forward Event
-        end
-        S->>B: Clear Buffer (Key: A)
-    end
-```
-
-## Configuration
-
-### Adding New Flows
-
-Flows are configured in `backend/src/main/resources/application.yml`. To add a new flow, simply add a new entry to the `app.flows` list:
-
-```yaml
-app:
-  flows:
-    - topicId: new-flow
-      mainTopic: new-flow-in
-      statusTopic: new-flow-status
-      triggerTopic: new-flow-resume
-      outputTopic: new-flow-out
-      bufferStoreName: new-flow-buffer-store
-```
-
-**Note**: You must also ensure the corresponding Kafka topics are created (update `scripts/init_topics.sh`).
-
 ## Project Structure
 
 ```
@@ -187,7 +198,8 @@ event-pause/
 │   │   ├── config/          # Configuration properties
 │   │   ├── control/         # REST controllers
 │   │   ├── model/           # Data models
-│   │   ├── processor/       # Kafka Streams processors
+│   │   ├── processor/       # Unified PauseAwareProcessor
+│   │   ├── serde/           # Type-safe SerDes (Event, KeyStatus, etc.)
 │   │   ├── service/         # Services (Consumers, Store Query)
 │   │   └── topology/        # Topology configuration
 │   └── src/main/resources/  # application.yml
@@ -198,4 +210,3 @@ event-pause/
 ├── scripts/                 # Infrastructure scripts
 └── run_compose.sh           # Main deployment script
 ```
-

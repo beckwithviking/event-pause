@@ -31,10 +31,15 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
     
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.apache.kafka:kafka-streams-test-utils'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    testLogging {
+        showStandardStreams = true
+        events "passed", "skipped", "failed"
+    }
 }
 
 // Spring Boot plugin configuration
@@ -52,4 +57,3 @@ bootJar {
     archiveBaseName = 'pause-aware-app'
     archiveVersion = '0.0.1-SNAPSHOT'
 }
-

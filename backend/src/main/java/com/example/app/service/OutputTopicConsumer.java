@@ -107,20 +107,28 @@ public class OutputTopicConsumer {
                 }
             }
 
-            // Poll for messages with a reasonable timeout
-            ConsumerRecords<String, Event> records = consumer.poll(Duration.ofMillis(1500));
+            // Poll loop to ensure we get all requested messages
+            int attempts = 0;
+            // Loop until we have enough messages or we try 5 times with no new data
+            while (messages.size() < maxMessages && attempts < 5) {
+                ConsumerRecords<String, Event> records = consumer.poll(Duration.ofMillis(1000));
 
-            System.out.println("[CONSUMER] Polled " + records.count() + " messages from topic " + topicName);
+                if (records.isEmpty()) {
+                    attempts++;
+                    continue;
+                } else {
+                    attempts = 0; // Reset attempts if we got data
+                }
 
-            // Process all messages
-            for (ConsumerRecord<String, Event> record : records) {
-                System.out.println("[CONSUMER] Found message: Key=" + record.key() + ", EventId=" + record.value().id()
-                        + ", Data=" + record.value().data() + ", Offset=" + record.offset());
-                Map<String, Object> message = createMessageMap(record);
-                messages.add(message);
+                System.out.println("[CONSUMER] Polled " + records.count() + " messages from topic " + topicName);
+
+                for (ConsumerRecord<String, Event> record : records) {
+                    Map<String, Object> message = createMessageMap(record);
+                    messages.add(message);
+                }
             }
 
-            if (records.count() == 0) {
+            if (messages.isEmpty()) {
                 System.out
                         .println("[CONSUMER] No messages found in topic " + topicName + ". End offsets: " + endOffsets);
             }
@@ -130,16 +138,6 @@ public class OutputTopicConsumer {
         } finally {
             consumer.close();
         }
-
-        // Sort by offset (most recent first)
-        messages.sort((a, b) -> {
-            // First sort by partition, then by offset
-            int partitionCompare = Integer.compare((Integer) a.get("partition"), (Integer) b.get("partition"));
-            if (partitionCompare != 0) {
-                return partitionCompare;
-            }
-            return Long.compare((Long) b.get("offset"), (Long) a.get("offset"));
-        });
 
         return messages;
     }

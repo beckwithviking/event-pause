@@ -1,6 +1,7 @@
 package com.example.app.topology;
 
 import com.example.app.config.PauseFlowProperties;
+import com.example.app.serde.KeyStatusSerde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.Topology;
@@ -20,9 +21,6 @@ public class StreamsOrchestrator {
 
     @Autowired
     private PauseTopologyBuilder topologyBuilder;
-
-    @Autowired
-    private SerdeProvider serdes;
 
     private final Map<String, PauseConfig> configMap;
 
@@ -48,7 +46,7 @@ public class StreamsOrchestrator {
             // We use a unique store name per flow to avoid conflicts
             builder.globalTable(
                     config.statusTopic(),
-                    Consumed.with(Serdes.String(), serdes.keyStatusSerde()),
+                    Consumed.with(Serdes.String(), new KeyStatusSerde()),
                     Materialized.as(config.statusStoreName()));
 
             // 2. Build individual sub-topology

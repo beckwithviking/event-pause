@@ -1,46 +1,58 @@
 package com.example.app.topology;
 
 import com.example.app.processor.PauseAwareProcessor;
-import com.example.app.processor.ResumeTriggerProcessor;
+import com.example.app.serde.BufferedEventsSerde;
+import com.example.app.serde.EventSerde;
+import com.example.app.serde.ResumeCommandSerde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.Consumed;
+import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.Produced;
 import org.apache.kafka.streams.state.Stores;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class PauseTopologyBuilder {
 
-        @Autowired
-        private SerdeProvider serdes;
-
         public void build(StreamsBuilder builder, PauseConfig config) {
 
-                // 1. Define State Store for buffering paused events
-                builder.addStateStore(
-                                Stores.keyValueStoreBuilder(
-                                                Stores.persistentKeyValueStore(config.bufferStoreName()),
-                                                Serdes.String(),
-                                                serdes.bufferedEventsSerde()));
+                // 1. State Store with Explicit Logging (Durability)
+                Map<String, String> changelogConfig = new HashMap<>();
+                changelogConfig.put("min.insync.replicas", "2");
 
-                // 2. Main Processing Topology
-                // Note: GlobalKTable stores are globally accessible, so we only need to connect
-                // the buffer store
-                builder.stream(config.mainTopic(), Consumed.with(Serdes.String(), serdes.eventSerde()))
-                                .process(
-                                                () -> new PauseAwareProcessor(config.bufferStoreName(),
-                                                                config.statusStoreName()),
-                                                config.bufferStoreName()) // Connect to buffer store (GlobalKTable is
-                                                                          // globally accessible)
-                                .to(config.outputTopic(), Produced.with(Serdes.String(), serdes.eventSerde()));
+                var storeBuilder = Stores.keyValueStoreBuilder(
+                                Stores.persistentKeyValueStore(config.bufferStoreName()),
+                                Serdes.String(),
+                                new BufferedEventsSerde())
+                                .withLoggingEnabled(changelogConfig); // CRITICAL: Explicit durability
 
-                // 3. Resume Trigger Topology
-                builder.stream(config.triggerTopic(), Consumed.with(Serdes.String(), serdes.resumeCommandSerde()))
-                                .process(
-                                                () -> new ResumeTriggerProcessor(config.bufferStoreName()),
-                                                config.bufferStoreName())
-                                .to(config.outputTopic(), Produced.with(Serdes.String(), serdes.eventSerde()));
+                builder.addStateStore(storeBuilder);
+
+                // 2. Sources with Explicit Type Safety - Unified Stream
+                // We read both topics, cast to Object, merge, and process.
+
+                KStream<String, Object> mainAndTriggerStream = builder.stream(
+                                config.mainTopic(),
+                                Consumed.with(Serdes.String(), new EventSerde()))
+                                .mapValues(v -> (Object) v)
+                                .merge(
+                                                builder.stream(
+                                                                config.triggerTopic(),
+                                                                Consumed.with(Serdes.String(),
+                                                                                new ResumeCommandSerde()))
+                                                                .mapValues(v -> (Object) v));
+
+                // 3. Unified Processor
+                mainAndTriggerStream.process(
+                                () -> new PauseAwareProcessor(config.bufferStoreName(), config.statusStoreName()),
+                                config.bufferStoreName() // Connect to buffer store
+                )
+                                .to(
+                                                config.outputTopic(),
+                                                Produced.with(Serdes.String(), new EventSerde()));
         }
 }

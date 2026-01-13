@@ -118,7 +118,7 @@ Iterating the entire state store every second is a performance antipattern (O(N)
 **The Logic:**
 ```java
 foreach (key in bufferedKeys):
-   if (GlobalKTable Status is ACTIVE) -> Drain Buffer.
+    if (GlobalKTable Status is ACTIVE) -> Drain Buffer.
 ```
 
 ### Dirty Key Punctuator Flow
@@ -189,10 +189,23 @@ npm install
 npm start
 ```
 
+## Testing Strict Ordering (The "Worst Case" Scenario)
+
+We have verified the "Pause-Aware" architecture can handle race conditions (Resume arriving at the same time as new events) using both Unit Tests and End-to-End integration tests.
+
+For detailed instructions on running these tests, see **[TESTING.md](TESTING.md)**.
+
+**Quick Command:**
+```bash
+# Run the JUnit logic verification
+./gradlew test --tests com.example.app.topology.StrictOrderingTest
+```
+
 ## Project Structure
 
 ```
 event-pause/
+├── TESTING.md               # Guide for testing strict ordering scenarios
 ├── backend/                 # Spring Boot application
 │   ├── src/main/java/com/example/app/
 │   │   ├── config/          # Configuration properties
@@ -202,11 +215,16 @@ event-pause/
 │   │   ├── serde/           # Type-safe SerDes (Event, KeyStatus, etc.)
 │   │   ├── service/         # Services (Consumers, Store Query)
 │   │   └── topology/        # Topology configuration
+│   ├── src/test/java/       # Tests
+│   │   └── .../topology/StrictOrderingTest.java # Logic verification
 │   └── src/main/resources/  # application.yml
 ├── frontend/                # Angular application
 │   ├── src/app/
 │   │   ├── app.component.*  # Main Dashboard
 │   │   └── kafka.service.ts # API Service
 ├── scripts/                 # Infrastructure scripts
+│   ├── init_topics.sh       # Topic creation
+│   └── tests/               # Integration tests
+│       └── verify_strict_ordering.py # End-to-End verification script
 └── run_compose.sh           # Main deployment script
 ```
